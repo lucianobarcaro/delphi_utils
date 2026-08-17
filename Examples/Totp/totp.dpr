@@ -3,9 +3,9 @@ program totp;
 uses
   Vcl.Forms,
   uMain in 'uMain.pas' {Form1},
-  uTOTP in 'uTOTP.pas',
-  DelphiZXingQRCode in 'DelphiZXingQRCode.pas',
-  uB32Encoding in 'uB32Encoding.pas';
+  DelphiZXingQRCode in '..\..\Source\DelphiZXingQRCode.pas',
+  uB32Encoding in '..\..\Source\uB32Encoding.pas',
+  uTOTP in '..\..\Source\uTOTP.pas';
 
 {$R *.res}
 

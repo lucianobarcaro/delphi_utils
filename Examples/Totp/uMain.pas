@@ -5,7 +5,7 @@ interface
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
   Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls,
-  Vcl.Samples.Spin;
+  Vcl.Samples.Spin, Vcl.Mask;
 
 type
   TForm1 = class(TForm)
@@ -32,6 +32,7 @@ type
     procedure edSecretExit(Sender: TObject);
     procedure edIssuerChange(Sender: TObject);
     procedure Button1Click(Sender: TObject);
+    procedure FormCreate(Sender: TObject);
   private
     { Private declarations }
     fLastDue: integer;
@@ -77,6 +78,11 @@ begin
   Timer1Timer(nil);
   edIssuerChange(nil);
   label1.Caption := obj.getToken();
+end;
+
+procedure TForm1.FormCreate(Sender: TObject);
+begin
+  edSecretExit(nil);
 end;
 
 procedure TForm1.FormShow(Sender: TObject);
