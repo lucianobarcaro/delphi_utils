@@ -57,9 +57,6 @@ implementation
 
 { TRedisClient }
 
-const
-  crlf = #13#10;
-
 function TRedisClient.&set(const aKey, aValue: string): boolean;
 begin
   result := AsBool(sendCommand(['SET', aKey, aValue]));
@@ -307,26 +304,34 @@ end;
 
 function TRedisClient.AsBool(aResult: tArray<string>): boolean;
 begin
-  result := (length(aResult) = 1) and
-            (Copy(aResult[0], 1, 2) = 'OK');
+  if length(aResult) <> 1 then
+    raise Exception.Create('?!?');
+
+  result := Copy(aResult[0], 1, 2) = 'OK';
 end;
 
 function TRedisClient.AsFloat(aResult: tArray<string>): Real;
 begin
-  if length(aResult) = 1 then
-    result := aResult[0].ToDouble;
+  if length(aResult) <> 1 then
+    raise Exception.Create('?!?');
+
+  result := aResult[0].ToDouble;
 end;
 
 function TRedisClient.AsInteger(aResult: tArray<string>): integer;
 begin
-  if length(aResult) = 1 then
-    result := aResult[0].ToInteger;
+  if length(aResult) <> 1 then
+    raise Exception.Create('?!?');
+
+  result := aResult[0].ToInteger;
 end;
 
 function TRedisClient.AsString(aResult: tArray<string>): string;
 begin
-  if length(aResult) = 1 then
-    result := aResult[0];
+  if length(aResult) <> 1 then
+    raise Exception.Create('?!?');
+
+  result := aResult[0];
 end;
 
 function TRedisClient.sendCommand(cmd: tArray<string>): tArray<string>;
@@ -340,6 +345,8 @@ begin
 end;
 
 function TRedisClient.serialize(sl: TArray<string>): string;
+const
+  crlf = #13#10;
 var
   r: TStringBuilder;
   v: UTF8String;
