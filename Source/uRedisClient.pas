@@ -130,7 +130,8 @@ end;
 
 destructor TRedisClient.Destroy;
 begin
-  if assigned(fConn) then begin
+  if assigned(fConn) then
+  begin
     if fConn.connected then
       fConn.disconnect;
     fConn.Free;
