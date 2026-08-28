@@ -23,7 +23,7 @@ implementation
 
 {$R *.dfm}
 
-uses uRedisClient;
+uses Redis.Client;
 
 procedure TForm1.btn1Click(Sender: TObject);
 var
@@ -34,8 +34,8 @@ begin
   if not redisClient.connect('192.168.4.6', 6379, '123123') then
     exit;
 
-  redisClient.&set('teste', 'abobora');
-  r:= redisClient.get('teste');
+  redisClient.Strings.&set('teste', 'abobora');
+  r:= redisClient.Strings.get('teste');
   showMessage(r);
 end;
 
