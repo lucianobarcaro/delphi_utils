@@ -34,8 +34,8 @@ begin
   if not redisClient.connect('192.168.4.6', 6379, '123123') then
     exit;
 
-  redisClient.Strings.&set('teste', 'abobora');
-  r:= redisClient.Strings.get('teste');
+  redisClient.&set('teste', 'abobora');
+  r:= redisClient.get('teste');
   showMessage(r);
 end;
 
