@@ -8,18 +8,25 @@ uses
   System.Generics.Collections;
 
 type
-  TRedisClient = class
+  TRedisKeyValue = TPair<String, String>;
+
+  TRedisClientBase = class
   private
     fConn: TIdTCPClient;
-
-    function Serialize(sl: TArray<string>): string;
-    function readFromServer: tarray<string>;
+    function Serialize(sl: TArray<String>): string;
+    function ReadFromServer: TArray<String>;
+    function MPairToArray(aPairs: tArray<TRedisKeyValue>): tArray<String>;
   protected
-    function AsBool(aResult: tArray<string>): boolean;
-    function AsString(aResult: tArray<string>): string;
-    function AsInteger(aResult: tArray<string>): integer;
-    function AsFloat(aResult: tArray<string>): Real;
-    function SendCommand(cmd: tArray<string>): tArray<string>;
+    function AsBool(aResult: TArray<String>): Boolean;
+    function AsString(aResult: TArray<String>): String;
+    function AsInteger(aResult: TArray<String>): Integer;
+    function AsFloat(aResult: TArray<String>): Real;
+    function SendCommand(cmd: TArray<String>): TArray<String>;
+  end;
+
+  // Implementar PubSub
+
+  TRedisClient = class(TRedisClientBase)
   public
     destructor Destroy; override;
 
@@ -41,8 +48,8 @@ type
     function IncrBy(const aKey: string; aValue: integer): integer;
     function IncrByFloat(const aKey: string; aValue: Real): Real;
     function MGet(const aKeys: tarray<string>): tArray<String>;
-    function MSet(const aKeyValues: tarray<string>): Boolean;
-    function MSetNX(const aKeyValues: tarray<string>): Boolean;
+    function MSet(const aKeyValues: TArray<TRedisKeyValue>): Boolean;
+    function MSetNX(const aKeyValues: TArray<TRedisKeyValue>): Boolean;
     function PSetEx(const aKey: string; aMs: uint32; aValue: String): Boolean;
     function &Set(const aKey, aValue: string): boolean;
     function SetEx(const aKey: string; aTTL: uint32; aValue: string): Boolean;
@@ -52,24 +59,35 @@ type
     function SubStr(const aKey: string; aStart, aEnd:Integer): string;
 	
 	// Hash
-    function HDel(const aKey: string; AFields: tArray<string>): Boolean;
+    function HDel(const aKey: string; AFields: TArray<String>): Boolean;
     function HExists(const aKey, aField: String): Boolean;
     function HGet(const aKey, aField: String): String;
-    function HGetAll(const aKey: String): TPair<String, String>;
+    function HGetAll(const aKey: String): TArray<TRedisKeyValue>;
     function HIncrBy(const aKey, aField: string; aValue: integer): integer;
     function HIncrByFloat(const aKey, aField: string; aValue: Real): Real;
     function HKeys(const aKey: String): TArray<string>;
     function HLen(const aKey: String): integer;
-    function HMGet(const aKey: String; aFields: TArray<string>): TPair<String, String>;
-    function HMSet(const aKey: String; aPairs: TArray<TPair<String, String>>): TPair<String, String>;
+    function HMGet(const aKey: String; aFields: TArray<string>): TArray<TRedisKeyValue>;
+    function HMSet(const aKey: String; aPairs: TArray<TRedisKeyValue>): Boolean;
     function HRandField(const aKey: String; aCount:Integer=0; aWithValues:Boolean=False): string;
     // function HScan
-    function HSet(const aKey: String; aFields: TArray<string>): TPair<String, String>;
+    function HSet(const aKey: String; aFields: TArray<TRedisKeyValue>): Boolean;
     function HSetNX(const aKey, aField, aValue: String): Boolean;
     function HStrLen(const aKey, aField: string): uint32;
-    function HVals(const aKey: String): TArray<TPair<String, String>>;
+    function HVals(const aKey: String): TArray<TRedisKeyValue>;
 end;
 
+  TRedisPipeline = class(TRedisClient)
+  private
+    // Gerar erro se houver watch após o MULTI
+    fWatching: Boolean;
+    fInTransaction: Boolean;
+    fStack: TArray<String>;
+    // Acumular todos os comandos e enviar de uma única vez.
+    // Exceto Serialize e ReadFromServer
+    // Sobreescrever todos os métodos de tRedisClientBase para
+    // Implementar WATCH, UNWATCH, MULTI, DISCARD, EXEC
+  end;
 implementation
 
 { TRedisClient }
@@ -111,7 +129,7 @@ begin
   inherited;
 end;
 
-function TRedisClient.readFromServer: tarray<string>;
+function TRedisClientBase.readFromServer: tarray<string>;
 var
   s: String;
   sz, i: integer;
@@ -151,7 +169,7 @@ begin
   end;
 end;
 
-function TRedisClient.AsBool(aResult: tArray<string>): boolean;
+function TRedisClientBase.AsBool(aResult: TArray<String>): boolean;
 begin
   if length(aResult) <> 1 then
     raise Exception.Create('?!?');
@@ -159,7 +177,7 @@ begin
   result := Copy(aResult[0], 1, 2) = 'OK';
 end;
 
-function TRedisClient.AsFloat(aResult: tArray<string>): Real;
+function TRedisClientBase.AsFloat(aResult: TArray<String>): Real;
 begin
   if length(aResult) <> 1 then
     raise Exception.Create('?!?');
@@ -167,7 +185,7 @@ begin
   result := aResult[0].ToDouble;
 end;
 
-function TRedisClient.AsInteger(aResult: tArray<string>): integer;
+function TRedisClientBase.AsInteger(aResult: TArray<String>): integer;
 begin
   if length(aResult) <> 1 then
     raise Exception.Create('?!?');
@@ -175,7 +193,7 @@ begin
   result := aResult[0].ToInteger;
 end;
 
-function TRedisClient.AsString(aResult: tArray<string>): string;
+function TRedisClientBase.AsString(aResult: TArray<String>): string;
 begin
   if length(aResult) <> 1 then
     raise Exception.Create('?!?');
@@ -183,7 +201,7 @@ begin
   result := aResult[0];
 end;
 
-function TRedisClient.sendCommand(cmd: tArray<string>): tArray<string>;
+function TRedisClientBase.sendCommand(cmd: TArray<String>): TArray<String>;
 var
   s: string;
 begin
@@ -193,7 +211,7 @@ begin
   result := readFromServer;
 end;
 
-function TRedisClient.serialize(sl: TArray<string>): string;
+function TRedisClientBase.serialize(sl: TArray<string>): string;
 const
   crlf = #13#10;
 var
@@ -217,6 +235,7 @@ begin
   end;
 end;
 
+// String
 function TRedisClient.&Set(const aKey, aValue: string): boolean;
 begin
   result := AsBool(sendCommand(['SET', aKey, aValue]));
@@ -249,7 +268,7 @@ end;
 
 function TRedisClient.GetEx(const aKey: string; aEx, aPx: integer; aExAt: uint32; aPxAt: uint64; aPersist: Boolean): Boolean;
 var
-  cmd:tArray<string>;
+  cmd:TArray<String>;
   i: integer;
 begin
   i := 1;
@@ -335,20 +354,28 @@ begin
 
 end;
 
-function TRedisClient.MSet(const aKeyValues: tarray<string>): Boolean;
+function TRedisClientBase.MPairToArray(aPairs: tArray<TPair<String, String>>): tArray<String>;
+var
+  i: integer;
 begin
-  if length(aKeyValues) mod 2 = 1 then
-    raise Exception.Create('Numero errado de parâmetros');
-
-  result := AsBool(SendCommand(['MSET'] + aKeyValues));
+  if Length(aPairs) = 0 then
+    raise Exception.Create('Número errado de parâmetros');
+  setLength(result, length(aPairs) * 2);
+  for i := 0 to length(aPairs)-1 do
+  begin
+    result[i*2] := aPairs[i].Key;
+    result[i*2+1] := aPairs[i].Value;
+  end;
 end;
 
-function TRedisClient.MSetNX(const aKeyValues: tarray<string>): Boolean;
+function TRedisClient.MSet(const aKeyValues: tarray<TPair<String, String>>): Boolean;
 begin
-  if length(aKeyValues) mod 2 = 1 then
-    raise Exception.Create('Numero errado de parâmetros');
+  result := AsBool(SendCommand(['MSET'] + MPairToArray(aKeyValues)));
+end;
 
-  result := AsBool(SendCommand(['MSETNX'] + aKeyValues));
+function TRedisClient.MSetNX(const aKeyValues: tArray<TRedisKeyValue>): Boolean;
+begin
+  result := AsBool(SendCommand(['MSETNX'] + MPairToArray(aKeyValues)));
 end;
 
 function TRedisClient.PSetEx(const aKey: string; aMs: uint32; aValue: String): Boolean;
@@ -381,79 +408,81 @@ begin
   result := AsString(SendCommand(['SUBSTR', aKey, aStart.ToString, aEnd.ToString]));
 end;
 
-function TRedisClient.HDel(const aKey: string; AFields: tArray<string>): Boolean;
+// Hash
+function TRedisClient.HDel(const aKey: string; AFields: TArray<String>): Boolean;
 begin
-
+  result := AsBool(SendCommand(['HDEL', aKey] + aFields));
 end;
 
 function TRedisClient.HExists(const aKey, aField: String): Boolean;
 begin
-
+  result := AsBool(SendCommand(['HEXISTS', aKey, aField]));
 end;
 
 function TRedisClient.HGet(const aKey, aField: String): String;
 begin
-
+  result := AsString(SendCommand(['HGET', aKey, aField]));
 end;
 
-function TRedisClient.HGetAll(const aKey: String): TPair<String, String>;
+function TRedisClient.HGetAll(const aKey: String): TArray<TRedisKeyValue>;
 begin
-
+  // Como vem?
 end;
 
 function TRedisClient.HIncrBy(const aKey, aField: string; aValue: integer): integer;
 begin
-
+  result := AsInteger(SendCommand(['HINCRBY', aKey, aField, aValue.toString]));
 end;
 
 function TRedisClient.HIncrByFloat(const aKey, aField: string; aValue: Real): Real;
 begin
-
+  result := AsFloat(SendCommand(['HINCRBY', aKey, aField, floatToStr(aValue, tFormatSettings.Invariant)]));
 end;
 
 function TRedisClient.HKeys(const aKey: String): TArray<string>;
 begin
-
+  // Como vem?
 end;
 
 function TRedisClient.HLen(const aKey: String): integer;
 begin
-
+  result := AsInteger(SendCommand(['HLEN', aKey]));
 end;
 
-function TRedisClient.HMGet(const aKey: String; aFields: TArray<string>): TPair<String, String>;
-begin
-
+function TRedisClient.HMGet(const aKey: String; aFields: TArray<string>): TArray<TRedisKeyValue>;
+begin     
+  // Como vem?
 end;
 
-function TRedisClient.HMSet(const aKey: String; aPairs: TArray<TPair<String, String>>): TPair<String, String>;
+function TRedisClient.HMSet(const aKey: String; aPairs: TArray<TRedisKeyValue>): Boolean;
 begin
-
+  result := AsBool(SendCommand(['HMSET'] + MPairToArray(aPairs)));
 end;
 
 function TRedisClient.HRandField(const aKey: String; aCount: Integer; aWithValues: Boolean): string;
 begin
-
+  // Como vem?
 end;
 
-function TRedisClient.HSet(const aKey: String; aFields: TArray<string>): TPair<String, String>;
+function TRedisClient.HSet(const aKey: String; aFields: TArray<TRedisKeyValue>): Boolean;
 begin
+  result := AsBool(SendCommand(['HSET'] + MPairToArray(aFields)));
 
 end;
 
 function TRedisClient.HSetNX(const aKey, aField, aValue: String): Boolean;
 begin
-
+  result := AsBool(SendCommand(['HSETNX', aKey, aField, aValue]));
 end;
 
 function TRedisClient.HStrLen(const aKey, aField: string): uint32;
 begin
-
+  result := AsInteger(SendCommand(['HSTRLEN', aKey, aField]));
 end;
 
 function TRedisClient.HVals(const aKey: String): TArray<TPair<String, String>>;
 begin
-
+  // Como vem?
 end;
 
 end.
