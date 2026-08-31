@@ -3,7 +3,41 @@ unit Redis.Client;
 interface
 
 uses
-  System.SysUtils, IdTCPClient, System.Generics.Collections;
+  System.SysUtils,
+  System.Generics.Collections,
+  System.SyncObjs,
+  System.Classes,
+  IdTCPClient;
+
+(*
+  Refatorar.
+  Base:
+    Serialize
+    ReadFromServer
+    SendCommand
+    MPairToArray
+    AsBool
+    AsString
+    AsInteger
+    AsFloat
+    AsArray
+  Client (Base):
+    * Comandos
+  Listener (Base):
+    Subscribe
+    UnSubscribe
+  Transaction (Client):
+    Override AsBool
+    Override AsString
+    Override AsInteger
+    Override AsFloat
+    Override AsArray
+    Override SendCommand
+    Watch
+    UnWatch
+    Exec
+    Discard
+*)
 
 type
   TRedisKeyValue = TPair<string, string>;
@@ -55,17 +89,25 @@ type
   end;
 
   IRedisTransaction = interface(IredisClient)
+    ['{85844905-8BA5-4631-BC03-51D4F205BBE7}']
     procedure Watch(aKeyList: TArray<string>);
     procedure UnWatch;
     procedure Exec;
     procedure Discard;
   end;
 
-  // Implementar PubSub
+  IRedisListener = Interface
+    ['{64D803C7-62DC-4D28-B644-F606D47FC707}']
+    Function Subscribe(aChannel: String): Integer; overload;
+    Function Subscribe(aChannel: TArray<String>): Integer; overload;
+    Procedure UnSubscribe(aChannel: String); overload;
+    Procedure UnSubscribe(aChannel: TArray<String>); overload;
+  End;
 
   TRedisClient = class(TInterfacedObject, IRedisClient)
   private
     fConn: TIdTCPClient;
+    fHost, fPassword: string;
     Function Serialize(sl: TArray<string>): string;
     Function ReadFromServer(aTimes: integer = 1): TArray<string>;
     Function MPairToArray(aPairs: tArray<TRedisKeyValue>): tArray<string>;
@@ -82,6 +124,7 @@ type
 
     // Transaction
     Function Pipeline: IRedisTransaction;
+    Function Listen(aChannel: String=''): IRedisListener;
 
     // ACL
     Function auth(const aPassword: string): Boolean;
@@ -195,7 +238,26 @@ type
     procedure Discard;
   end;
 
-implementation
+  TListenerCallBack = Procedure (aChannel, aMessage: String);
+
+  TRedisListener = class(TInterfacedObject, IRedisListener)
+  private
+    fThread: TThread;
+    fCS: TCriticalSection;
+    fCallback: TListenerCallBack;
+    Procedure ThreadReader;
+  public
+    constructor create(aHost, aPassword:String);
+    destructor destroy; override;
+    Function Subscribe(aChannel: String): Integer; overload;
+    Function Subscribe(aChannel: TArray<String>): Integer; overload;
+    Procedure UnSubscribe(aChannel: String); overload;
+    Procedure UnSubscribe(aChannel: TArray<String>); overload;
+
+    property Callback: TListenerCallBack read fCallback write fCallback;
+  end;
+
+  implementation
 
 uses System.TypInfo;
 
@@ -203,7 +265,10 @@ uses System.TypInfo;
 
 function TRedisClient.auth(const aPassword: string): Boolean;
 begin
+  fPassword := '';
   result := AsBool(sendCommand(['AUTH', aPassword]));
+  if result then
+    fPassword := aPassword;
 end;
 
 function TRedisClient.BLMove(aSource, aDestination: string; popFrom, pushTo: TListPoint; aTimeout: integer): String;
@@ -241,6 +306,8 @@ begin
   fConn.ConnectTimeout := 3000;
   fConn.ReadTimeout := 3000;
   fConn.Connect;
+
+  fHost := aHost;
 
   if aPassword <> '' then
     if not Auth(aPassword) then
@@ -404,7 +471,7 @@ begin
   result := readFromServer;
 end;
 
-function TRedisClient.serialize(sl: TArray<string>): string;
+function TRedisClient.Serialize(sl: TArray<string>): string;
 const
   crlf = #13#10;
 var
@@ -551,6 +618,13 @@ procedure TRedisClient.LInsert(aKey: string; aRelative: TListRelative; aPivot,
   aItem: string);
 begin
 
+end;
+
+function TRedisClient.Listen(aChannel: String): IRedisListener;
+begin
+  result := TRedisListener.create(fHost, fPassword);
+  if aChannel <> '' then
+    result.Subscribe(aChannel);
 end;
 
 function TRedisClient.LLen(aKey: string): integer;
@@ -901,6 +975,57 @@ begin
   setLength(fWatchStack, i + length(aKeyList));
   for j := 0 to length(aKeyList) do
     fWatchStack[i + j] := aKeyList[j];
+end;
+
+{ TRedisPubSub }
+
+function TRedisListener.Subscribe(aChannel: String): Integer;
+begin
+  Subscribe([aChannel]);
+end;
+
+constructor TRedisListener.create(aHost, aPassword: String);
+begin
+  fCS := TCriticalSection.create;
+end;
+
+destructor TRedisListener.destroy;
+begin
+  fThread.terminate;
+  fThread.WaitFor;
+  fThread.Free;
+  fCS.Free;
+  inherited;
+end;
+
+function TRedisListener.Subscribe(aChannel: TArray<String>): integer;
+begin
+  fCS.Acquire;
+  try
+    // Envia comando e trata retorno (se for int, seta result)
+  finally
+    fCS.Release;
+  end;
+end;
+
+procedure TRedisListener.ThreadReader;
+begin
+  // Aqui... le do server e trata mensagem
+end;
+
+procedure TRedisListener.UnSubscribe(aChannel: String);
+begin
+  UnSubscribe([aChannel]);
+end;
+
+procedure TRedisListener.UnSubscribe(aChannel: TArray<String>);
+begin
+  fCS.Acquire;
+  try
+    // Envia comando e aguarda
+  finally
+    fCS.Release;
+  end;
 end;
 
 end.
