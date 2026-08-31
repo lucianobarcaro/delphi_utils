@@ -9,122 +9,46 @@ uses
   System.Classes,
   IdTCPClient;
 
-(*
-  Refatorar.
-  Base:
-    Serialize
-    ReadFromServer
-    SendCommand
-    MPairToArray
-    AsBool
-    AsString
-    AsInteger
-    AsFloat
-    AsArray
-  Client (Base):
-    * Comandos
-  Listener (Base):
-    Subscribe
-    UnSubscribe
-  Transaction (Client):
-    Override AsBool
-    Override AsString
-    Override AsInteger
-    Override AsFloat
-    Override AsArray
-    Override SendCommand
-    Watch
-    UnWatch
-    Exec
-    Discard
-*)
-
 type
   TRedisKeyValue = TPair<string, string>;
+  TRedisScoreMember = TPair<Integer, string>;
   TListPoint = (LEFT, RIGHT);
   TListRelative = (BEFORE, AFTER);
+  TListenerCallBack = Procedure (aChannel, aMessage: String);
 
-  IRedisClient = interface
-    ['{556EE5AA-61FA-401D-A270-3FC07421955F}']
-    // Str
-    function Append(const aKey, aValue: string): boolean;
-    function Decr(const aKey: string): boolean;
-    function DecrBy(const aKey: string; aValue: integer): boolean;
-    function Get(const aKey: string): string;
-    function GetDel(const aKey: string): string;
-    function GetEx(const aKey: string; aEx: integer = 0; aPx: integer = 0; aExAt: uint32 = 0; aPxAt: uint64 = 0; aPersist: Boolean = False): Boolean;
-    function GetRange(const aKey: string; aStart, aEnd: Integer): string;
-    function GetSet(const aKey, aValue: string): string;
-    function Incr(const akey: string): integer;
-    function IncrBy(const aKey: string; aValue: integer): integer;
-    function IncrByFloat(const aKey: string; aValue: Real): Real;
-    function MGet(const aKeys: tarray<string>): tArray<string>;
-    function MSet(const aKeyValues: TArray<TRedisKeyValue>): Boolean;
-    function MSetNX(const aKeyValues: TArray<TRedisKeyValue>): Boolean;
-    function PSetEx(const aKey: string; aMs: uint32; aValue: string): Boolean;
-    function  &Set(const aKey, aValue: string): boolean;
-    function SetEx(const aKey: string; aTTL: uint32; aValue: string): Boolean;
-    function SetNX(const aKey, aValue: string): boolean;
-    function SetRange(const aKey: string; aOffset: uint32; aValue: string): Boolean;
-    function StrLen(const aKey: string): uint32;
-    function SubStr(const aKey: string; aStart, aEnd: Integer): string;
+  TRedisTransaction = class;
+  TRedisListener = class;
 
-    // Hash
-    function HDel(const aKey: string; AFields: TArray<string>): Boolean;
-    function HExists(const aKey, aField: string): Boolean;
-    function HGet(const aKey, aField: string): string;
-    function HGetAll(const aKey: string): TArray<TRedisKeyValue>;
-    function HIncrBy(const aKey, aField: string; aValue: integer): integer;
-    function HIncrByFloat(const aKey, aField: string; aValue: Real): Real;
-    function HKeys(const aKey: string): TArray<string>;
-    function HLen(const aKey: string): integer;
-    function HMGet(const aKey: string; aFields: TArray<string>): TArray<TRedisKeyValue>;
-    function HMSet(const aKey: string; aPairs: TArray<TRedisKeyValue>): Boolean;
-    function HRandField(const aKey: string; aCount: Integer = 0; aWithValues: Boolean = False): string;
-    // function HScan
-    function HSet(const aKey: string; aFields: TArray<TRedisKeyValue>): Boolean;
-    function HSetNX(const aKey, aField, aValue: string): Boolean;
-    function HStrLen(const aKey, aField: string): uint32;
-    function HVals(const aKey: string): TArray<TRedisKeyValue>;
-  end;
-
-  IRedisTransaction = interface(IredisClient)
-    ['{85844905-8BA5-4631-BC03-51D4F205BBE7}']
-    procedure Watch(aKeyList: TArray<string>);
-    procedure UnWatch;
-    procedure Exec;
-    procedure Discard;
-  end;
-
-  IRedisListener = Interface
-    ['{64D803C7-62DC-4D28-B644-F606D47FC707}']
-    Function Subscribe(aChannel: String): Integer; overload;
-    Function Subscribe(aChannel: TArray<String>): Integer; overload;
-    Procedure UnSubscribe(aChannel: String); overload;
-    Procedure UnSubscribe(aChannel: TArray<String>); overload;
-  End;
-
-  TRedisClient = class(TInterfacedObject, IRedisClient)
+  TRedisBase = class
   private
     fConn: TIdTCPClient;
     fHost, fPassword: string;
     Function Serialize(sl: TArray<string>): string;
     Function ReadFromServer(aTimes: integer = 1): TArray<string>;
-    Function MPairToArray(aPairs: tArray<TRedisKeyValue>): tArray<string>;
+    Function MPairToArray(aPairs: tArray<TRedisKeyValue>): tArray<string>; overload;
+    Function MPairToArray(aPairs: tArray<TRedisScoreMember>): tArray<string>; overload;
+    Function ArrayToMPair(aElements: tArray<string>): TArray<TRedisKeyValue>;
   protected
+    Function AsArray(aResult: TArray<string>): TArray<String>; virtual;
+    Function AsArrayBool(aResult: TArray<string>): TArray<Boolean>; virtual;
+    Function AsArrayInt(aResult: TArray<string>): TArray<Integer>; virtual;
     Function AsBool(aResult: TArray<string>): Boolean; virtual;
     Function AsString(aResult: TArray<string>): string; virtual;
     Function AsInteger(aResult: TArray<string>): Integer; virtual;
     Function AsFloat(aResult: TArray<string>): Real; virtual;
     Function SendCommand(cmd: TArray<string>): TArray<string>; virtual;
+  end;
+
+  TRedisClient = class(TRedisBase)
   public
     destructor Destroy; override;
 
     Function Connect(aHost: string; aPort: UInt16; aPassword: string = ''): Boolean;
 
     // Transaction
-    Function Pipeline: IRedisTransaction;
-    Function Listen(aChannel: String=''): IRedisListener;
+    Function Pipeline: TRedisTransaction;
+    // Listener
+    Function Listen(aChannel: String=''): TRedisListener;
 
     // ACL
     Function auth(const aPassword: string): Boolean;
@@ -142,18 +66,18 @@ type
     Function IncrBy(const aKey: string; aValue: integer): integer;
     Function IncrByFloat(const aKey: string; aValue: Real): Real;
     Function MGet(const aKeys: tarray<string>): tArray<string>;
-    Function MSet(const aKeyValues: TArray<TRedisKeyValue>): Boolean;
-    Function MSetNX(const aKeyValues: TArray<TRedisKeyValue>): Boolean;
-    Function PSetEx(const aKey: string; aMs: uint32; aValue: string): Boolean;
-    Function &Set(const aKey, aValue: string): boolean;
-    Function SetEx(const aKey: string; aTTL: uint32; aValue: string): Boolean;
-    Function SetNX(const aKey, aValue: string): boolean;
-    Function SetRange(const aKey: string; aOffset: uint32; aValue: string): Boolean;
+    Procedure MSet(const aKeyValues: TArray<TRedisKeyValue>);
+    Procedure MSetNX(const aKeyValues: TArray<TRedisKeyValue>);
+    Procedure PSetEx(const aKey: string; aMs: uint32; aValue: string);
+    Procedure &Set(const aKey, aValue: string);
+    Procedure SetEx(const aKey: string; aTTL: uint32; aValue: string);
+    Procedure SetNX(const aKey, aValue: string);
+    Procedure SetRange(const aKey: string; aOffset: uint32; aValue: string);
     Function StrLen(const aKey: string): uint32;
     Function SubStr(const aKey: string; aStart, aEnd: Integer): string;
 
     // Hash --------------------------------------------------------------------
-    Function HDel(const aKey: string; AFields: TArray<string>): Boolean;
+    Procedure HDel(const aKey: string; AFields: TArray<string>);
     Function HExists(const aKey, aField: string): Boolean;
     Function HGet(const aKey, aField: string): string;
     Function HGetAll(const aKey: string): TArray<TRedisKeyValue>;
@@ -162,11 +86,11 @@ type
     Function HKeys(const aKey: string): TArray<string>;
     Function HLen(const aKey: string): integer;
     Function HMGet(const aKey: string; aFields: TArray<string>): TArray<TRedisKeyValue>;
-    Function HMSet(const aKey: string; aPairs: TArray<TRedisKeyValue>): Boolean;
-    Function HRandField(const aKey: string; aCount: Integer = 0; aWithValues: Boolean = False): string;
+    Procedure HMSet(const aKey: string; aPairs: TArray<TRedisKeyValue>);
+    Function HRandField(const aKey: string; aCount: Integer = 0; aWithValues: Boolean = False): TArray<String>;
     // function HScan
-    Function HSet(const aKey: string; aFields: TArray<TRedisKeyValue>): Boolean;
-    Function HSetNX(const aKey, aField, aValue: string): Boolean;
+    procedure HSet(const aKey: string; aFields: TArray<TRedisKeyValue>);
+    Procedure HSetNX(const aKey, aField, aValue: string);
     Function HStrLen(const aKey, aField: string): uint32;
     Function HVals(const aKey: string): TArray<TRedisKeyValue>;
 
@@ -180,7 +104,7 @@ type
     Function LLen(aKey: string): integer;
     Procedure LMove(aSource, aDestination: string; popFrom, pushTo: TListPoint);
     Function LPop(aKey: string; aCount:Integer=1): TArray<String>;
-    Function LPos(aKey, aElement: string; aRank:integer=1; aCount: integer=0; aMaxLen:integer=0): TArray<integer>;
+    Function LPos(aKey, aElement: string; aRank:integer=1; aCount: integer=0; aMaxLen:integer=0): TArray<Integer>;
     Procedure LPush(aKey: String; aElements: tArray<string>); overload;
     Procedure LPush(aKey, aElement: String); overload;
     Procedure LPushX(aKey: String; aElements: tArray<string>); overload;
@@ -214,22 +138,32 @@ type
     // SScan
     Function SUnion(aKeys: TArray<string>): TArray<String>;
     Procedure SUnionStore(aDestiny: String; aKeys: TArray<string>);
+
+    // Sorted Sets -------------------------------------------------------------
+    Function BZPopMax(aKey: String; aTimeout: integer): String; overload;
+    Function BZPopMax(aKeys: TArray<String>; aTimeout: integer): String; overload;
+    Function BZPopMin(aKey: String; aTimeout: integer): String; overload;
+    Function BZPopMin(aKeys: TArray<String>; aTimeout: integer): String; overload;
+    Procedure ZAdd(aKey: String; aScoreMember: TRedisScoreMember; aNxXx: String=''; aGtLt: String=''; aCh: boolean=False; aIncr:Boolean=False); overload;
+    Procedure ZAdd(aKey: String; aScoreMembers: TArray<TRedisScoreMember>; aNxXx: String=''; aGtLt: String=''; aCh: boolean=False; aIncr:Boolean=False); overload;
+    Function ZCard(akey: String): Integer;
+    Function ZCount(aKey: String; aMin, aMax: Integer): Integer;
+
   end;
 
-  TRedisTransaction = class(TRedisClient, IRedisTransaction)
+  TRedisTransaction = class(TRedisClient)
   private
     fStack: TArray<string>;
     fWatchStack: TArray<string>;
   protected
+    function AsArray(aResult: TArray<string>): TArray<String>; override;
+    function AsArrayBool(aResult: TArray<string>): TArray<Boolean>; override;
+    function AsArrayInt(aResult: TArray<string>): TArray<Integer>; override;
     function AsBool(aResult: TArray<string>): Boolean; override;
     function AsString(aResult: TArray<string>): string; override;
     function AsInteger(aResult: TArray<string>): Integer; override;
     function AsFloat(aResult: TArray<string>): Real; override;
     function SendCommand(cmd: TArray<string>): TArray<string>; override;
-    // Acumular todos os comandos e enviar de uma única vez.
-    // Exceto Serialize e ReadFromServer
-    // Sobreescrever todos os métodos privados e protegidos
-    // Implementar WATCH, UNWATCH, MULTI, DISCARD, EXEC
   public
     constructor create(AConnection: TIdTCPClient);
     procedure Watch(aKeyList: TArray<string>);
@@ -238,9 +172,7 @@ type
     procedure Discard;
   end;
 
-  TListenerCallBack = Procedure (aChannel, aMessage: String);
-
-  TRedisListener = class(TInterfacedObject, IRedisListener)
+  TRedisListener = class(TRedisBase)
   private
     fThread: TThread;
     fCS: TCriticalSection;
@@ -261,76 +193,99 @@ type
 
 uses System.TypInfo;
 
-{ TRedisClient }
-
-function TRedisClient.auth(const aPassword: string): Boolean;
+{ TRedisBase }
+function TRedisBase.ArrayToMPair(aElements: tArray<string>): TArray<TRedisKeyValue>;
+var
+  i, sz: integer;
 begin
-  fPassword := '';
-  result := AsBool(sendCommand(['AUTH', aPassword]));
-  if result then
-    fPassword := aPassword;
-end;
-
-function TRedisClient.BLMove(aSource, aDestination: string; popFrom, pushTo: TListPoint; aTimeout: integer): String;
-begin
-  result := AsString(SendCommand(['BLMOVE', aSource, aDestination,
-      GetEnumName(TypeInfo(TListPoint), ord(popFrom)),
-      GetEnumName(TypeInfo(TListPoint), ord(pushTo)),
-      aTimeout.toString]));
-end;
-
-function TRedisClient.BLPop(aKeys: TArray<string>; aTimeout: Integer): string;
-begin
-
-end;
-
-function TRedisClient.BRPop(aKeys: TArray<string>; aTimeout: Integer): string;
-begin
-
-end;
-
-function TRedisClient.BRPoplPush(aSource, aDestination: string;
-  aTimeout: integer): String;
-begin
-
-end;
-
-function TRedisClient.connect(aHost: string; aPort: UInt16; aPassword: string): Boolean;
-begin
-  if assigned(fConn) then
-    fConn.Disconnect;
-
-  fConn := TIdTCPClient.create(nil);
-  fConn.host := aHost;
-  fConn.port := aPort;
-  fConn.ConnectTimeout := 3000;
-  fConn.ReadTimeout := 3000;
-  fConn.Connect;
-
-  fHost := aHost;
-
-  if aPassword <> '' then
-    if not Auth(aPassword) then
-    begin
-      fConn.Disconnect;
-      raise Exception.create('Falha na autenticação');
-    end;
-  result := true;
-end;
-
-destructor TRedisClient.Destroy;
-begin
-  if assigned(fConn) then
+  sz := Length(aElements);
+  if sz mod 2 <> 0 then
+    raise Exception.Create('Número errado de parâmetros');
+  setLength(result, sz div 2);
+  i := 0;
+  while i < sz do
   begin
-    if fConn.connected then
-      fConn.disconnect;
-    fConn.Free;
+    result[i div 2] := TRedisKeyValue.create(aElements[i], aElements[i+1]);
+    inc(i, 2);
   end;
-
-  inherited;
 end;
 
-function TRedisClient.readFromServer(aTimes: integer): tarray<string>;
+function TRedisBase.AsArray(aResult: TArray<string>): TArray<String>;
+begin
+
+end;
+
+function TRedisBase.AsArrayBool(aResult: TArray<string>): TArray<Boolean>;
+begin
+
+end;
+
+function TRedisBase.AsArrayInt(aResult: TArray<string>): TArray<Integer>;
+begin
+
+end;
+
+function TRedisBase.AsBool(aResult: TArray<string>): boolean;
+begin
+  if length(aResult) <> 1 then
+    raise Exception.Create('?!?');
+
+  result := Copy(aResult[0], 1, 2) = 'OK';
+end;
+
+function TRedisBase.AsFloat(aResult: TArray<string>): Real;
+begin
+  if length(aResult) <> 1 then
+    raise Exception.Create('?!?');
+
+  result := aResult[0].ToDouble;
+end;
+
+function TRedisBase.AsInteger(aResult: TArray<string>): integer;
+begin
+  if length(aResult) <> 1 then
+    raise Exception.Create('?!?');
+
+  result := aResult[0].ToInteger;
+end;
+
+function TRedisBase.AsString(aResult: TArray<string>): string;
+begin
+  if length(aResult) <> 1 then
+    raise Exception.Create('?!?');
+
+  result := aResult[0];
+end;
+
+function TRedisBase.MPairToArray(aPairs: tArray<TRedisScoreMember>): tArray<string>;
+var
+  i: integer;
+begin
+  if Length(aPairs) = 0 then
+    raise Exception.Create('Número errado de parâmetros');
+  setLength(result, length(aPairs) * 2);
+  for i := 0 to length(aPairs) - 1 do
+  begin
+    result[i * 2] := aPairs[i].Key.ToString;
+    result[i * 2 + 1] := aPairs[i].Value;
+  end;
+end;
+
+function TRedisBase.MPairToArray(aPairs: tArray<TRedisKeyValue>): tArray<string>;
+var
+  i: integer;
+begin
+  if Length(aPairs) = 0 then
+    raise Exception.Create('Número errado de parâmetros');
+  setLength(result, length(aPairs) * 2);
+  for i := 0 to length(aPairs) - 1 do
+  begin
+    result[i * 2] := aPairs[i].Key;
+    result[i * 2 + 1] := aPairs[i].Value;
+  end;
+end;
+
+function TRedisBase.ReadFromServer(aTimes: integer): tarray<string>;
 var
   s: string;
   sz, i: integer;
@@ -373,95 +328,7 @@ begin
     ReadFromServer(aTimes - 1);
 end;
 
-function TRedisClient.RPop(aKey: string; aCount: Integer): TArray<String>;
-begin
-
-end;
-
-function TRedisClient.RPoplPush(aSource, aDestination: string): String;
-begin
-
-end;
-
-procedure TRedisClient.RPush(aKey, aElement: String);
-begin
-
-end;
-
-procedure TRedisClient.RPush(aKey: String; aElements: tArray<string>);
-begin
-
-end;
-
-procedure TRedisClient.RPushX(aKey, aElement: String);
-begin
-
-end;
-
-procedure TRedisClient.RPushX(aKey: String; aElements: tArray<string>);
-begin
-
-end;
-
-function TRedisClient.AsBool(aResult: TArray<string>): boolean;
-begin
-  if length(aResult) <> 1 then
-    raise Exception.Create('?!?');
-
-  result := Copy(aResult[0], 1, 2) = 'OK';
-end;
-
-function TRedisClient.AsFloat(aResult: TArray<string>): Real;
-begin
-  if length(aResult) <> 1 then
-    raise Exception.Create('?!?');
-
-  result := aResult[0].ToDouble;
-end;
-
-function TRedisClient.AsInteger(aResult: TArray<string>): integer;
-begin
-  if length(aResult) <> 1 then
-    raise Exception.Create('?!?');
-
-  result := aResult[0].ToInteger;
-end;
-
-function TRedisClient.AsString(aResult: TArray<string>): string;
-begin
-  if length(aResult) <> 1 then
-    raise Exception.Create('?!?');
-
-  result := aResult[0];
-end;
-
-procedure TRedisClient.SAdd(aKey: String; aMembers: tArray<string>);
-begin
-
-end;
-
-procedure TRedisClient.SAdd(aKey, aMember: String);
-begin
-
-end;
-
-function TRedisClient.SCard(aKey: String): Integer;
-begin
-
-end;
-
-function TRedisClient.SDiff(aKey: String;
-  aKeys: TArray<string>): TArray<String>;
-begin
-
-end;
-
-procedure TRedisClient.SDiffStore(aDestiny: String; aKeys: TArray<string>);
-begin
-
-end;
-
-function TRedisClient.sendCommand(cmd: TArray<string>): TArray<string>;
+function TRedisBase.SendCommand(cmd: TArray<string>): TArray<string>;
 var
   s: string;
 begin
@@ -471,7 +338,7 @@ begin
   result := readFromServer;
 end;
 
-function TRedisClient.Serialize(sl: TArray<string>): string;
+function TRedisBase.Serialize(sl: TArray<string>): string;
 const
   crlf = #13#10;
 var
@@ -495,10 +362,151 @@ begin
   end;
 end;
 
-// String
-function TRedisClient.&Set(const aKey, aValue: string): boolean;
+{ TRedisClient }
+function TRedisClient.auth(const aPassword: string): Boolean;
 begin
-  result := AsBool(sendCommand(['SET', aKey, aValue]));
+  fPassword := '';
+  result := AsBool(sendCommand(['AUTH', aPassword]));
+  if result then
+    fPassword := aPassword;
+end;
+
+function TRedisClient.BLMove(aSource, aDestination: string; popFrom, pushTo: TListPoint; aTimeout: integer): String;
+begin
+  result := AsString(SendCommand(['BLMOVE', aSource, aDestination,
+      GetEnumName(TypeInfo(TListPoint), ord(popFrom)),
+      GetEnumName(TypeInfo(TListPoint), ord(pushTo)),
+      aTimeout.toString]));
+end;
+
+function TRedisClient.BLPop(aKeys: TArray<string>; aTimeout: Integer): string;
+begin
+  result := AsString(SendCommand(['BLPOP'] + aKeys + [aTimeout.ToString]));
+end;
+
+function TRedisClient.BRPop(aKeys: TArray<string>; aTimeout: Integer): string;
+begin
+  result := AsString(SendCommand(['BRPOP'] + aKeys + [aTimeout.ToString]));
+end;
+
+function TRedisClient.BRPoplPush(aSource, aDestination: string; aTimeout: integer): String;
+begin
+  result := AsString(SendCommand(['BRPOPLPUSH', aSource, aDestination, aTimeout.ToString]));
+end;
+
+function TRedisClient.BZPopMax(aKey: String; aTimeout: integer): String;
+begin
+  result := BZPopMax([aKey], aTimeout);
+end;
+
+function TRedisClient.BZPopMax(aKeys: TArray<String>; aTimeout: integer): String;
+begin
+  result := AsString(SendCommand(['BZPOPMAX'] + aKeys + [aTimeout.ToString]));
+end;
+
+function TRedisClient.BZPopMin(aKey: String; aTimeout: integer): String;
+begin
+  result := BZPopMin([aKey], aTimeout);
+end;
+
+function TRedisClient.BZPopMin(aKeys: TArray<String>; aTimeout: integer): String;
+begin
+  result := AsString(SendCommand(['BZPOPMIN'] + aKeys + [aTimeout.ToString]));
+end;
+
+function TRedisClient.connect(aHost: string; aPort: UInt16; aPassword: string): Boolean;
+begin
+  if assigned(fConn) then
+    fConn.Disconnect;
+
+  fConn := TIdTCPClient.create(nil);
+  fConn.host := aHost;
+  fConn.port := aPort;
+  fConn.ConnectTimeout := 3000;
+  fConn.ReadTimeout := 3000;
+  fConn.Connect;
+
+  fHost := aHost;
+
+  if aPassword <> '' then
+    if not Auth(aPassword) then
+    begin
+      fConn.Disconnect;
+      raise Exception.create('Falha na autenticação');
+    end;
+  result := true;
+end;
+
+destructor TRedisClient.Destroy;
+begin
+  if assigned(fConn) then
+  begin
+    if fConn.connected then
+      fConn.disconnect;
+    fConn.Free;
+  end;
+
+  inherited;
+end;
+
+function TRedisClient.RPop(aKey: string; aCount: Integer): TArray<String>;
+begin
+  result := AsArray(SendCommand(['RPOP', aKey, aCount.ToString]));
+end;
+
+function TRedisClient.RPoplPush(aSource, aDestination: string): String;
+begin
+  result := AsString(SendCommand(['RPOPLPUSH', aSource, aDestination]));
+end;
+
+procedure TRedisClient.RPush(aKey, aElement: String);
+begin
+  RPush(aKey, [aElement]);
+end;
+
+procedure TRedisClient.RPush(aKey: String; aElements: tArray<string>);
+begin
+  SendCommand(['RPUSH'] + aElements);
+end;
+
+procedure TRedisClient.RPushX(aKey, aElement: String);
+begin
+  RPushX(aKey, [aElement]);
+end;
+
+procedure TRedisClient.RPushX(aKey: String; aElements: tArray<string>);
+begin
+  SendCommand(['RPUSHX'] + aElements);
+end;
+
+procedure TRedisClient.SAdd(aKey: String; aMembers: tArray<string>);
+begin
+  SendCommand(['SADD'] + aMembers);
+end;
+
+procedure TRedisClient.SAdd(aKey, aMember: String);
+begin
+  SAdd(aKey, [aMember]);
+end;
+
+function TRedisClient.SCard(aKey: String): Integer;
+begin
+  result := AsInteger(SendCommand(['SCARD', aKey]));
+end;
+
+function TRedisClient.SDiff(aKey: String; aKeys: TArray<string>): TArray<String>;
+begin
+  result := AsArray(SendCommand(['SDIFF'] + akeys));
+end;
+
+procedure TRedisClient.SDiffStore(aDestiny: String; aKeys: TArray<string>);
+begin
+  SendCommand(['SDIFFSTORE'] + akeys);
+end;
+
+Procedure TRedisClient.&Set(const aKey, aValue: string);
+begin
+  sendCommand(['SET', aKey, aValue]);
 end;
 
 function TRedisClient.Append(const aKey, aValue: string): boolean;
@@ -611,16 +619,15 @@ end;
 
 function TRedisClient.LIndex(aKey: string; aIndex: integer): String;
 begin
-
+  result := AsString(SendCommand(['LINDEX', aKey, aIndex.ToString]));
 end;
 
-procedure TRedisClient.LInsert(aKey: string; aRelative: TListRelative; aPivot,
-  aItem: string);
+procedure TRedisClient.LInsert(aKey: string; aRelative: TListRelative; aPivot, aItem: string);
 begin
-
+  SendCommand(['LINSERT', aKey, GetEnumName(TypeInfo(TListRelative), ord(aRelative)), aPivot, aItem]);
 end;
 
-function TRedisClient.Listen(aChannel: String): IRedisListener;
+function TRedisClient.Listen(aChannel: String): TRedisListener;
 begin
   result := TRedisListener.create(fHost, fPassword);
   if aChannel <> '' then
@@ -629,167 +636,150 @@ end;
 
 function TRedisClient.LLen(aKey: string): integer;
 begin
-
+  SendCommand(['LLEN', aKey]);
 end;
 
-procedure TRedisClient.LMove(aSource, aDestination: string; popFrom,
-  pushTo: TListPoint);
+procedure TRedisClient.LMove(aSource, aDestination: string; popFrom, pushTo: TListPoint);
 begin
-
+  SendCommand(['LMOVE', aSource, aDestination,
+    GetEnumName(TypeInfo(TListPoint), ord(popFrom)),
+    GetEnumName(TypeInfo(TListPoint), ord(pushTo))
+  ]);
 end;
 
 function TRedisClient.LPop(aKey: string; aCount: Integer): TArray<String>;
 begin
-
+  result := AsArray(SendCommand(['LPOP', aCount.ToString]));
 end;
 
-function TRedisClient.LPos(aKey, aElement: string; aRank, aCount,
-  aMaxLen: integer): TArray<integer>;
+function TRedisClient.LPos(aKey, aElement: string; aRank, aCount, aMaxLen: integer): TArray<Integer>;
 begin
-
+  result := AsArrayInt(SendCommand(['LPOS', aKey, aElement, aRank.ToString, aMaxLen.ToString]));
 end;
 
 procedure TRedisClient.LPush(aKey: String; aElements: tArray<string>);
 begin
-
+  SendCommand(['LPUSH'] + aElements);
 end;
 
 procedure TRedisClient.LPush(aKey, aElement: String);
 begin
-
+  LPush(aKey, [aElement]);
 end;
 
 procedure TRedisClient.LPushX(aKey, aElement: String);
 begin
-
+  LPushX(aKey, [aElement]);
 end;
 
 procedure TRedisClient.LPushX(aKey: String; aElements: tArray<string>);
 begin
-
+  SendCommand(['LPUSHX'] + aElements);
 end;
 
-function TRedisClient.LRange(aKey: String; aStart,
-  aStop: integer): TArray<String>;
+function TRedisClient.LRange(aKey: String; aStart, aStop: integer): TArray<String>;
 begin
-
+  result := asArray(sendCommand(['LRANGE', aKey, aStart.ToString, aStop.ToString]));
 end;
 
 procedure TRedisClient.LRem(aKey: string; aCount: integer; aElement: string);
 begin
-
+  SendCommand(['LREM', aKey, aCount.ToString, aElement]);
 end;
 
 procedure TRedisClient.LSet(aKey: string; aIndex: integer; aElement: string);
 begin
-
+  SendCommand(['LSET', aKey, aIndex.ToString, aElement]);
 end;
 
 procedure TRedisClient.LTrim(aKey: String; aStart, aStop: integer);
 begin
-
+  SendCommand(['LTRIM', aKey, aStart.ToString, aStop.ToString]);
 end;
 
 function TRedisClient.MGet(const aKeys: tarray<string>): tArray<string>;
 begin
-
+  result := AsArray(SendCommand(['MGET']+ aKeys));
 end;
 
-function TRedisClient.MPairToArray(aPairs: tArray<TPair<string, string>>): tArray<string>;
-var
-  i: integer;
+Procedure TRedisClient.MSet(const aKeyValues: tarray<TPair<string, string>>);
 begin
-  if Length(aPairs) = 0 then
-    raise Exception.Create('Número errado de parâmetros');
-  setLength(result, length(aPairs) * 2);
-  for i := 0 to length(aPairs) - 1 do
-  begin
-    result[i * 2] := aPairs[i].Key;
-    result[i * 2 + 1] := aPairs[i].Value;
-  end;
+  SendCommand(['MSET'] + MPairToArray(aKeyValues));
 end;
 
-function TRedisClient.MSet(const aKeyValues: tarray<TPair<string, string>>): Boolean;
+Procedure TRedisClient.MSetNX(const aKeyValues: tArray<TRedisKeyValue>);
 begin
-  result := AsBool(SendCommand(['MSET'] + MPairToArray(aKeyValues)));
+  SendCommand(['MSETNX'] + MPairToArray(aKeyValues));
 end;
 
-function TRedisClient.MSetNX(const aKeyValues: tArray<TRedisKeyValue>): Boolean;
-begin
-  result := AsBool(SendCommand(['MSETNX'] + MPairToArray(aKeyValues)));
-end;
-
-function TRedisClient.Pipeline: IRedisTransaction;
+function TRedisClient.Pipeline: TRedisTransaction;
 begin
   result := TRedisTransaction.create(fConn);
 end;
 
-function TRedisClient.PSetEx(const aKey: string; aMs: uint32; aValue: string): Boolean;
+Procedure TRedisClient.PSetEx(const aKey: string; aMs: uint32; aValue: string);
 begin
-  result := AsBool(SendCommand(['PSETEX', aMs.ToString, aValue]));
+  SendCommand(['PSETEX', aMs.ToString, aValue]);
 end;
 
-function TRedisClient.SetEx(const aKey: string; aTTL: uint32; aValue: string): Boolean;
+Procedure TRedisClient.SetEx(const aKey: string; aTTL: uint32; aValue: string);
 begin
-  result := AsBool(SendCommand(['SETEX', aTTL.ToString, aValue]));
+  SendCommand(['SETEX', aTTL.ToString, aValue]);
 end;
 
-function TRedisClient.SetNX(const aKey, aValue: string): boolean;
+Procedure TRedisClient.SetNX(const aKey, aValue: string);
 begin
-  result := AsBool(SendCommand(['SETNX', aValue]));
+  SendCommand(['SETNX', aValue]);
 end;
 
-function TRedisClient.SetRange(const aKey: string; aOffset: uint32; aValue: string): Boolean;
+Procedure TRedisClient.SetRange(const aKey: string; aOffset: uint32; aValue: string);
 begin
-  result := AsBool(SendCommand(['SETRANGE', aOffset.toString, aValue]));
+  SendCommand(['SETRANGE', aOffset.toString, aValue]);
 end;
 
-function TRedisClient.SInter(aKey: String;
-  aKeys: TArray<string>): TArray<String>;
+function TRedisClient.SInter(aKey: String; aKeys: TArray<string>): TArray<String>;
 begin
-
+  result := AsArray(SendCommand(['SINTER'] + aKeys));
 end;
 
 procedure TRedisClient.SInterStore(aDestiny: String; aKeys: TArray<string>);
 begin
-
+  SendCommand(['SINTERSTORE'] + aKeys)
 end;
 
 function TRedisClient.SIsMember(aKey, aMember: String): Boolean;
 begin
-
+  Result := asBool(SendCommand(['SISMEMBER', aKey, aMember]));
 end;
 
 function TRedisClient.SMembers(aKey: String): TArray<String>;
 begin
-
+  result := AsArray(SendCommand(['SMEMBERS', akey]));
 end;
 
-function TRedisClient.SMIsMember(aKey: String;
-  aMembers: TArray<String>): TArray<Boolean>;
+function TRedisClient.SMIsMember(aKey: String; aMembers: TArray<String>): TArray<Boolean>;
 begin
-
+  result := AsArrayBool(SendCommand(['SMISMEMBER'] + aMembers));
 end;
 
 procedure TRedisClient.SMove(aSource, aDestiny, aMember: String);
 begin
-
+  SendCommand(['SMOVE', aSource, aDestiny, aMember]);
 end;
 
 function TRedisClient.SPop(aKey: String; aCount: integer): TArray<String>;
 begin
-
+  result := AsArray(SendCommand(['SPOP', aKey, aCount.ToString]));
 end;
 
-function TRedisClient.SRandMember(aKey: String;
-  aCount: integer): TArray<String>;
+function TRedisClient.SRandMember(aKey: String; aCount: integer): TArray<String>;
 begin
-
+  result := AsArray(SendCommand(['SRANDMEMBER', aKey, aCount.ToString]));
 end;
 
 procedure TRedisClient.SRem(aKey: String; aMembers: TArray<string>);
 begin
-
+  SendCommand(['SREM'] + aMembers);
 end;
 
 function TRedisClient.StrLen(const aKey: string): uint32;
@@ -804,18 +794,62 @@ end;
 
 function TRedisClient.SUnion(aKeys: TArray<string>): TArray<String>;
 begin
-
+  result := AsArray(SendCommand(['SUNION'] + aKeys));
 end;
 
 procedure TRedisClient.SUnionStore(aDestiny: String; aKeys: TArray<string>);
 begin
+  SendCommand(['SUNIONSTORE'] + aKeys)
+end;
 
+procedure TRedisClient.ZAdd(aKey: String; aScoreMember: TRedisScoreMember; aNxXx, aGtLt: String; aCh, aIncr: Boolean);
+begin
+  ZAdd(aKey, [aScoreMember], aNxXx, aGtLt, aCh, aIncr);
+end;
+
+procedure TRedisClient.ZAdd(aKey: String; aScoreMembers: TArray<TRedisScoreMember>; aNxXx, aGtLt: String; aCh, aIncr: Boolean);
+var
+  cmd: tArray<String>;
+begin
+  cmd := ['ZADD', aKey] + MPairToArray(aScoreMembers);
+
+  aNxXx := UpperCase(aNxXx);
+  if aNxXx <> '' then
+    if (aNxXx <> 'NX') and (aNxXx <> 'XX') then
+      raise Exception.Create('Error Message')
+    else
+      cmd := cmd + [aNxXx];
+
+  aGtLt := UpperCase(aGtLt);
+  if aGtLt <> '' then
+    if (aGtLt <> 'GT') and (aGtLt <> 'LT') then
+      raise Exception.Create('Error Message')
+    else
+      cmd := cmd + [aGtLt];
+
+  if aCh then
+    cmd := cmd + ['CH'];
+
+  if aIncr then
+    cmd := cmd + ['INCR'];
+
+  SendCommand(cmd);
+end;
+
+function TRedisClient.ZCard(aKey: String): Integer;
+begin
+  result := AsInteger(SendCommand(['ZCARD', aKey]));
+end;
+
+function TRedisClient.ZCount(aKey: String; aMin, aMax: Integer): Integer;
+begin
+  result := AsInteger(SendCommand(['ZCOUNT', aKey, aMin.ToString, aMax.ToString]));
 end;
 
 // Hash
-function TRedisClient.HDel(const aKey: string; AFields: TArray<string>): Boolean;
+Procedure TRedisClient.HDel(const aKey: string; AFields: TArray<string>);
 begin
-  result := AsBool(SendCommand(['HDEL', aKey] + AFields));
+  SendCommand(['HDEL', aKey] + AFields);
 end;
 
 function TRedisClient.HExists(const aKey, aField: string): Boolean;
@@ -830,7 +864,7 @@ end;
 
 function TRedisClient.HGetAll(const aKey: string): TArray<TRedisKeyValue>;
 begin
-  // Como vem?
+  result := ArrayToMPair(SendCommand(['HGETALL', aKey]));
 end;
 
 function TRedisClient.HIncrBy(const aKey, aField: string; aValue: integer): integer;
@@ -845,7 +879,7 @@ end;
 
 function TRedisClient.HKeys(const aKey: string): TArray<string>;
 begin
-  // Como vem?
+  result := AsArray(SendCommand(['HKEYS', aKey]));
 end;
 
 function TRedisClient.HLen(const aKey: string): integer;
@@ -855,28 +889,32 @@ end;
 
 function TRedisClient.HMGet(const aKey: string; aFields: TArray<string>): TArray<TRedisKeyValue>;
 begin
-  // Como vem?
+  result := ArrayToMPair(SendCommand(['HMGET', aKey] + aFields));
 end;
 
-function TRedisClient.HMSet(const aKey: string; aPairs: TArray<TRedisKeyValue>): Boolean;
+Procedure TRedisClient.HMSet(const aKey: string; aPairs: TArray<TRedisKeyValue>);
 begin
-  result := AsBool(SendCommand(['HMSET'] + MPairToArray(aPairs)));
+  SendCommand(['HMSET'] + MPairToArray(aPairs));
 end;
 
-function TRedisClient.HRandField(const aKey: string; aCount: Integer; aWithValues: Boolean): string;
+function TRedisClient.HRandField(const aKey: string; aCount: Integer; aWithValues: Boolean): TArray<String>;
+var
+  cmd: tArray<String>;
 begin
-  // Como vem?
+  cmd := ['HRANDFIELD', aKey, aCount.ToString];
+  if aWithValues then
+    cmd := cmd + ['WITHVALUES'];
+  result := AsArray(SendCommand(cmd));
 end;
 
-function TRedisClient.HSet(const aKey: string; aFields: TArray<TRedisKeyValue>): Boolean;
+procedure TRedisClient.HSet(const aKey: string; aFields: TArray<TRedisKeyValue>);
 begin
-  result := AsBool(SendCommand(['HSET'] + MPairToArray(aFields)));
-
+  SendCommand(['HSET'] + MPairToArray(aFields));
 end;
 
-function TRedisClient.HSetNX(const aKey, aField, aValue: string): Boolean;
+Procedure TRedisClient.HSetNX(const aKey, aField, aValue: string);
 begin
-  result := AsBool(SendCommand(['HSETNX', aKey, aField, aValue]));
+  SendCommand(['HSETNX', aKey, aField, aValue]);
 end;
 
 function TRedisClient.HStrLen(const aKey, aField: string): uint32;
@@ -884,14 +922,28 @@ begin
   result := AsInteger(SendCommand(['HSTRLEN', aKey, aField]));
 end;
 
-function TRedisClient.HVals(const aKey: string): TArray<TPair<string, string>>;
+function TRedisClient.HVals(const aKey: string): TArray<TRedisKeyValue>;
 begin
-  // Como vem?
+  result := ArrayToMPair(SendCommand(['HVALS', aKey]));
 end;
 
 
 
 { TRedisTransaction }
+function TRedisTransaction.AsArray(aResult: TArray<string>): TArray<string>;
+begin
+  result := [];
+end;
+
+function TRedisTransaction.AsArrayBool(aResult: TArray<string>): TArray<Boolean>;
+begin
+  result := [];
+end;
+
+function TRedisTransaction.AsArrayInt(aResult: TArray<string>): TArray<Integer>;
+begin
+  result := [];
+end;
 
 function TRedisTransaction.AsBool(aResult: TArray<string>): Boolean;
 begin
@@ -977,8 +1029,7 @@ begin
     fWatchStack[i + j] := aKeyList[j];
 end;
 
-{ TRedisPubSub }
-
+{ TRedisListener }
 function TRedisListener.Subscribe(aChannel: String): Integer;
 begin
   Subscribe([aChannel]);
@@ -987,6 +1038,20 @@ end;
 constructor TRedisListener.create(aHost, aPassword: String);
 begin
   fCS := TCriticalSection.create;
+  fThread := TThread.CreateAnonymousThread(
+  procedure
+  begin
+    repeat
+      Sleep(10);
+      fCS.Acquire;
+      try
+        ThreadReader;
+      finally
+        fCs.Release;
+      end;
+    until TThread.CheckTerminated;
+  end
+  );
 end;
 
 destructor TRedisListener.destroy;
@@ -1002,15 +1067,20 @@ function TRedisListener.Subscribe(aChannel: TArray<String>): integer;
 begin
   fCS.Acquire;
   try
-    // Envia comando e trata retorno (se for int, seta result)
+    SendCommand(['SUBSCRIBE'] + aChannel);
   finally
     fCS.Release;
   end;
 end;
 
 procedure TRedisListener.ThreadReader;
+var
+  ret: TArray<String>;
 begin
-  // Aqui... le do server e trata mensagem
+  if not fConn.IOHandler.CheckForDataOnSource(10)
+    exit;
+  ret := ReadFromServer;
+  // Lê e interpreta o retorno.
 end;
 
 procedure TRedisListener.UnSubscribe(aChannel: String);
@@ -1022,7 +1092,7 @@ procedure TRedisListener.UnSubscribe(aChannel: TArray<String>);
 begin
   fCS.Acquire;
   try
-    // Envia comando e aguarda
+    SendCommand(['UNSUBSCRIBE'] + aChannel);
   finally
     fCS.Release;
   end;
