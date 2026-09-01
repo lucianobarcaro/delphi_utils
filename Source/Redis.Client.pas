@@ -28,6 +28,7 @@ type
     Function MPairToArray(aPairs: tArray<TRedisKeyValue>): tArray<string>; overload;
     Function MPairToArray(aPairs: tArray<TRedisScoreMember>): tArray<string>; overload;
     Function ArrayToMPair(aElements: tArray<string>): TArray<TRedisKeyValue>;
+    Function ArrayToMScoreMembers(aElements: TArray<string>): TArray<TRedisScoreMember>;
   protected
     Function AsArray(aResult: TArray<string>): TArray<String>; virtual;
     Function AsArrayBool(aResult: TArray<string>): TArray<Boolean>; virtual;
@@ -40,6 +41,8 @@ type
   end;
 
   TRedisClient = class(TRedisBase)
+  protected
+    function ZInterMakeCmd(aCMD, aDestiny: string; aNumKeys: integer; aKeys: TArray<string>; aWeights: TArray<single>; aAggregate: string; aWithScore: Boolean): TArray<string>;
   public
     destructor Destroy; override;
 
@@ -148,7 +151,23 @@ type
     Procedure ZAdd(aKey: String; aScoreMembers: TArray<TRedisScoreMember>; aNxXx: String=''; aGtLt: String=''; aCh: boolean=False; aIncr:Boolean=False); overload;
     Function ZCard(akey: String): Integer;
     Function ZCount(aKey: String; aMin, aMax: Integer): Integer;
-
+    Function ZDiff(aNumKeys: Integer; aKey: String): TArray<string>; overload;
+    Function ZDiff(aNumKeys: Integer; aKeys: tArray<String>): TArray<string>; overload;
+    Function ZDiffWithScores(aNumKeys: Integer; aKey: String): TArray<TRedisScoreMember>; overload;
+    Function ZDiffWithScores(aNumKeys: Integer; aKeys: tArray<String>): TArray<TRedisScoreMember>; overload;
+    Procedure ZDiffStore(aDestiny: String; aNumKeys: Integer; aKey: String); overload;
+    Procedure ZDiffStore(aDestiny: String; aNumKeys: Integer; aKeys: tArray<String>); overload;
+    Function ZIncrBy(aKey: string; aIncrement: integer; aMember: string): Integer;
+    Function ZInter(aNumKeys: integer; aKey: string; aWeights: TArray<Single>=[]; aAggregate: string=''): tArray<string>; overload;
+    Function ZInter(aNumKeys: integer; aKeys: TArray<string>; aWeights: TArray<Single>=[]; aAggregate: string=''): tArray<string>; overload;
+    Function ZInterWithScores(aNumKeys: integer; aKey: string; aWeights: TArray<Single>=[]; aAggregate: string=''): tArray<TRedisScoreMember>; overload;
+    Function ZInterWithScores(aNumKeys: integer; aKeys: TArray<string>; aWeights: TArray<Single>=[]; aAggregate: string=''): tArray<TRedisScoreMember>; overload;
+    Procedure ZInterStore(aDestiny: string; aNumKeys: integer; aKey: string; aWeights: TArray<Single>=[]; aAggregate: string=''); overload;
+    Procedure ZInterStore(aDestiny: string; aNumKeys: integer; aKeys: TArray<string>; aWeights: TArray<Single>=[]; aAggregate: string=''); overload;
+    Function ZLexCount(aKey: string; aMin, aMax: integer): integer;
+    Function ZMScore(akey: string; aMember: string): Integer; overload;
+    Function ZMScore(akey: string; aMembers: TArray<string>): TArray<Integer>; overload;
+    Function ZMPopMax(aKey: string; aCount:integer=1): TArray<TRedisScoreMember>;
   end;
 
   TRedisTransaction = class(TRedisClient)
@@ -206,6 +225,22 @@ begin
   while i < sz do
   begin
     result[i div 2] := TRedisKeyValue.create(aElements[i], aElements[i+1]);
+    inc(i, 2);
+  end;
+end;
+
+function TRedisBase.ArrayToMScoreMembers(aElements: TArray<string>): TArray<TRedisScoreMember>;
+var
+  i, sz: integer;
+begin
+  sz := Length(aElements);
+  if sz mod 2 <> 0 then
+    raise Exception.Create('Número errado de parâmetros');
+  setLength(result, sz div 2);
+  i := 0;
+  while i < sz do
+  begin
+    result[i div 2] := TRedisScoreMember.create(StrToInt(aElements[i+1]), aElements[i]);
     inc(i, 2);
   end;
 end;
@@ -846,6 +881,113 @@ begin
   result := AsInteger(SendCommand(['ZCOUNT', aKey, aMin.ToString, aMax.ToString]));
 end;
 
+function TRedisClient.ZDiff(aNumKeys: Integer; aKey: String): TArray<string>;
+begin
+  result := ZDiff(aNumKeys, [aKey]);
+end;
+
+function TRedisClient.ZDiff(aNumKeys: Integer; aKeys: tArray<String>): TArray<string>;
+begin
+  result := AsArray(SendCommand(['ZDIFF', aNumKeys.ToString] + aKeys));
+
+end;
+
+procedure TRedisClient.ZDiffStore(aDestiny: String; aNumKeys: Integer; aKeys: tArray<String>);
+begin
+  SendCommand(['ZDIFFSTORE', aDestiny, aNumKeys.ToString] + aKeys);
+end;
+
+procedure TRedisClient.ZDiffStore(aDestiny: String; aNumKeys: Integer; aKey: String);
+begin
+  ZDiffStore(aDestiny, aNumKeys, [aKey]);
+end;
+
+function TRedisClient.ZDiffWithScores(aNumKeys: Integer; aKey: String): TArray<TRedisScoreMember>;
+begin
+  result := ZDiffWithScores(aNumKeys, [aKey]);
+end;
+
+function TRedisClient.ZDiffWithScores(aNumKeys: Integer; aKeys: tArray<String>): TArray<TRedisScoreMember>;
+begin
+  result := ArrayToMScoreMembers(SendCommand(['ZDIFF', aNumKeys.ToString] + aKeys + ['WITHSCORES']));
+end;
+
+function TRedisClient.ZIncrBy(aKey: string; aIncrement: integer; aMember: string): Integer;
+begin
+  result := AsInteger(SendCommand(['ZINCRBY', aKey, aIncrement.ToString, aMember]));
+end;
+
+function TRedisClient.ZInterMakeCmd(aCMD, aDestiny: string; aNumKeys: integer; aKeys: TArray<string>; aWeights: TArray<single>; aAggregate: string; aWithScore: Boolean): TArray<string>;
+var
+  i: integer;
+begin
+  result := [aCmd];
+  if aDestiny <> '' then
+    result := result + [aDestiny];
+  result := result + [aNumKeys.toString] + aKeys;
+
+  for i := 0 to length(aWeights)-1 do
+  begin
+    if i=0 then
+      result := result + ['WEIGHTS'];
+    result := result + [aWeights[i].ToString];
+  end;
+  if aAggregate<>'' then
+    result := result + ['AGGREGATE', aAggregate];
+  if aWithScore then
+    result := result + ['WITHSCORES'];
+end;
+
+function TRedisClient.ZInter(aNumKeys: integer; aKey: string; aWeights: TArray<Single>; aAggregate: string): tArray<string>;
+begin
+  result := ZInter(aNumKeys, [aKey], aWeights, aAggregate);
+end;
+
+function TRedisClient.ZInter(aNumKeys: integer; aKeys: TArray<string>; aWeights: TArray<Single>; aAggregate: string): tArray<string>;
+begin
+  result := AsArray(SendCommand(ZInterMakeCmd('ZINTER', '', aNumKeys, aKeys, aWeights, aAggregate, False)));
+end;
+
+procedure TRedisClient.ZInterStore(aDestiny: string; aNumKeys: integer; aKeys: TArray<string>; aWeights: TArray<Single>; aAggregate: string);
+begin
+  SendCommand(ZInterMakeCmd('ZINTERSTORE', aDestiny, aNumKeys, aKeys, aWeights, aAggregate, False));
+end;
+
+procedure TRedisClient.ZInterStore(aDestiny: string; aNumKeys: integer; aKey: string; aWeights: TArray<Single>; aAggregate: string);
+begin
+  ZinterStore(aDestiny, aNumKeys, [akey], aWeights, aAggregate);
+end;
+
+function TRedisClient.ZInterWithScores(aNumKeys: integer; aKey: string; aWeights: TArray<Single>; aAggregate: string): tArray<TRedisScoreMember>;
+begin
+  result := ZInterWithScores(aNumKeys, [aKey], aWeights, aAggregate);
+end;
+
+function TRedisClient.ZInterWithScores(aNumKeys: integer; aKeys: TArray<string>; aWeights: TArray<Single>; aAggregate: string): tArray<TRedisScoreMember>;
+begin
+  result := ArrayToMScoreMembers(SendCommand(ZInterMakeCmd('ZINTER', '', aNumKeys, aKeys, aWeights, aAggregate, True)));
+end;
+
+function TRedisClient.ZLexCount(aKey: string; aMin, aMax: integer): integer;
+begin
+  result := AsInteger(SendCommand(['ZLEXCOUNT', akey, aMin.ToString, aMax.ToString]));
+end;
+
+function TRedisClient.ZMPopMax(aKey: string; aCount: integer): TArray<TRedisScoreMember>;
+begin
+  result := ArrayToMScoreMembers(SendCommand(['ZMPOPMAX', akey, aCount.ToString]));
+end;
+
+function TRedisClient.ZMScore(akey, aMember: string): Integer;
+begin
+  Result := ZMScore(aKey, [aMember])[0];
+end;
+
+function TRedisClient.ZMScore(akey: string; aMembers: TArray<string>): TArray<Integer>;
+begin
+  result := AsArrayInt(SendCommand(['ZMSCORE', akey] + aMembers));
+end;
+
 // Hash
 Procedure TRedisClient.HDel(const aKey: string; AFields: TArray<string>);
 begin
@@ -1077,10 +1219,11 @@ procedure TRedisListener.ThreadReader;
 var
   ret: TArray<String>;
 begin
-  if not fConn.IOHandler.CheckForDataOnSource(10)
+  if not fConn.IOHandler.CheckForDataOnSource(10) then
     exit;
   ret := ReadFromServer;
   // Lê e interpreta o retorno.
+  // TODO: Continuar aqui
 end;
 
 procedure TRedisListener.UnSubscribe(aChannel: String);
