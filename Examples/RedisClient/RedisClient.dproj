@@ -127,7 +127,7 @@
             <Form>Form1</Form>
             <FormType>dfm</FormType>
         </DCCReference>
-        <DCCReference Include="..\..\Source\uRedisClient.pas"/>
+        <DCCReference Include="..\..\Source\Redis.Client.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

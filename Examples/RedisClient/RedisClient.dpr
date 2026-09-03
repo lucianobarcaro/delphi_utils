@@ -3,7 +3,7 @@ program RedisClient;
 uses
   Vcl.Forms,
   uMain in 'uMain.pas' {Form1},
-  uRedisClient in '..\..\Source\uRedisClient.pas';
+  Redis.Client in '..\..\Source\Redis.Client.pas';
 
 {$R *.res}
 

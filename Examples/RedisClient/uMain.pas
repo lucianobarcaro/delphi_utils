@@ -23,7 +23,7 @@ implementation
 
 {$R *.dfm}
 
-uses uRedisClient;
+uses Redis.Client;
 
 procedure TForm1.btn1Click(Sender: TObject);
 var
