@@ -22,6 +22,7 @@ type
   TRedisBase = class
   private
     fConn: TIdTCPClient;
+    fCMD: TArray<string>;
     fHost, fPassword: string;
     Function Serialize(sl: TArray<string>): string;
     Function ReadFromServer(aTimes: integer = 1): TArray<string>;
@@ -45,6 +46,7 @@ type
     function _ZInterCMD(aCMD, aDestiny: string; aNumKeys: integer; aKeys: TArray<string>; aWeights: TArray<single>; aAggregate: string; aWithScore: Boolean): TArray<string>;
     function _ZRangeCMD(aCmd, aDestiny, aKey: string; aStart, aStop: integer; aBy: string; aRev: boolean; aLOffset, aLCount: integer; aWithScores:Boolean=false): TArray<string>;
     function _ZUnionCMD(aCmd, aDestiny: string; aNumKeys: integer; aKeys: TArray<string>; aWeights: TArray<integer>; aAggregate: string; aWithScores:Boolean=false): TArray<String>;
+    function _ZExpireCMD(aCmd, aKey: String; aInterval: int64; aModifier: string): TArray<String>;
   public
     destructor Destroy; override;
 
@@ -166,6 +168,49 @@ type
     Function ZScore(aKey, aMember: string): Integer;
     Function ZUnion(aNumKeys: integer; aKeys: TArray<string>; aWeights: TArray<integer>; aAggregate: string=''): TArray<String>;
     Procedure ZUnionStore(aDestiny: string; aNumKeys: integer; aKeys: TArray<string>; aWeights: TArray<integer>; aAggregate: string='');
+
+    // Stream
+    // Bitmap
+    // HyperLogLog
+    // Geospatial
+    // JSON
+    // Search (FT)
+    // Time Series
+    // PubSub (TRedisListener)
+    // Transaction (TRedisTransaction)
+    // Scripting
+    // Connection
+    // Server
+    // Cluster
+    // Generic
+    Function Copy(aSource, aDestination: String; aDB:integer=-1; aReplace:Boolean=False): Boolean;
+    Function Del(aKeys: TArray<string>): integer;
+    Function Dump(aKey: string): TBytes;
+    Function Exists(aKeys: TArray<String>): Integer;
+    Procedure Expire(aKey: string; aSeconds: integer; aModifier:string=''); // NX, XX, GT, LT
+    Procedure ExpireAT(akey: string; AUnixTime: Integer; aModifier: string='');  // NX, XX, GT, LT
+    Function Keys(aPattern: string): TArray<string>;
+    // Migrate
+    Function Move(aKey: string; aDB: integer): boolean;
+    // Object Encoding
+    // Object Freq
+    // Object Idletime
+    // Object Refcount
+    Procedure Persist(aKey: string);
+    Procedure PExpire(aKey: string; aMilisseconds: integer; aModifier:string=''); // NX, XX, GT, LT
+    Procedure PExpireAT(akey: string; AUnixTimeMS: int64; aModifier: string='');  // NX, XX, GT, LT
+    Function PTTL(aKey: string): integer;
+    // RandomKey
+    Function Rename(aKey, aNewKey: string): Boolean;
+    Function RenameNX(aKey, aNewKey: string): Boolean;
+    // Restore
+    // Scan
+    // Sort
+    Procedure Touch(aKeys: TArray<string>);
+    Function TTL(aKey: string): integer;
+    Function &Type(aKey: String): String;
+    Procedure Unlink(aKeys: TArray<String>);
+    // Wait
   end;
 
   TRedisTransaction = class(TRedisClient)
@@ -462,6 +507,17 @@ begin
   result := true;
 end;
 
+function TRedisClient.Copy(aSource, aDestination: String; aDB: integer; aReplace: Boolean): Boolean;
+begin
+  fCmd := ['COPY', aSource, aDestination];
+  if aDB >= 0 then
+    fCmd := fCmd + ['DB', aDB.ToString];
+  if aReplace then
+    fCmd := fCmd + ['REPLACE'];
+
+  result := AsBool(SendCommand(fCmd));
+end;
+
 destructor TRedisClient.Destroy;
 begin
   if assigned(fConn) then
@@ -472,6 +528,36 @@ begin
   end;
 
   inherited;
+end;
+
+function TRedisClient.Dump(aKey: string): TBytes;
+begin
+  result := TEncoding.UTF8.GetBytes(AsString(SendCommand(['DUMP', aKey])));
+end;
+
+function TRedisClient.Exists(aKeys: TArray<String>): Integer;
+begin
+  result := AsInteger(SendCommand(['EXISTS'] + aKeys));
+end;
+
+procedure TRedisClient.Expire(aKey: string; aSeconds: integer; aModifier: string);
+begin
+  SendCommand(_ZExpireCMD('EXPIRE', aKey, aSeconds, aModifier));
+end;
+
+procedure TRedisClient.ExpireAT(akey: string; AUnixTime: Integer; aModifier: string);
+begin
+  SendCommand(_ZExpireCMD('EXPIREAT', aKey, aSeconds, aModifier));
+end;
+
+function TRedisClient.Rename(aKey, aNewKey: string): Boolean;
+begin
+  result := AsBool(SendCommand(['RENAME', aKey, aNewKey]));
+end;
+
+function TRedisClient.RenameNX(aKey, aNewKey: string): Boolean;
+begin
+  result := AsBool(SendCommand(['RENAMENX', aKey, aNewKey]));
 end;
 
 function TRedisClient.RPop(aKey: string; aCount: Integer): TArray<String>;
@@ -514,6 +600,11 @@ begin
   sendCommand(['SET', aKey, aValue]);
 end;
 
+function TRedisClient.&Type(aKey: String): String;
+begin
+  result := AsString(SendCommand(['TYPE', aKey]));
+end;
+
 function TRedisClient.Append(const aKey, aValue: string): boolean;
 begin
   result := Asbool(sendCommand(['APPEND', aKey, aValue]));
@@ -529,6 +620,11 @@ begin
   result := AsBool(SendCommand(['DECRBY', aKey, aValue.toString]));
 end;
 
+function TRedisClient.Del(aKeys: TArray<string>): integer;
+begin
+  result := AsInteger(SendCommand(['DEL'] + aKeys));
+end;
+
 function TRedisClient.Get(const aKey: string): string;
 begin
   result := AsString(SendCommand(['GET', aKey]));
@@ -541,18 +637,17 @@ end;
 
 function TRedisClient.GetEx(const aKey: string; aEx, aPx: integer; aExAt: uint32; aPxAt: uint64; aPersist: Boolean): Boolean;
 var
-  cmd: TArray<string>;
   i: integer;
 begin
   i := 1;
-  setLength(cmd, i);
-  cmd[0] := 'GETEX';
+  setLength(fCmd, i);
+  fCmd[0] := 'GETEX';
   if aEx > 0 then
   begin
     inc(i, 2);
-    setLength(cmd, i);
-    cmd[i - 2] := 'EX';
-    cmd[i - 1] := aEx.ToString;
+    setLength(fCmd, i);
+    fCmd[i - 2] := 'EX';
+    fCmd[i - 1] := aEx.ToString;
   end;
 
   if aPx > 0 then
@@ -560,9 +655,9 @@ begin
     if i > 1 then
       raise Exception.Create('Mais de um parâmetro de tempo setado');
     inc(i, 2);
-    setLength(cmd, i);
-    cmd[i - 2] := 'PX';
-    cmd[i - 1] := aPx.ToString;
+    setLength(fCmd, i);
+    fCmd[i - 2] := 'PX';
+    fCmd[i - 1] := aPx.ToString;
   end;
 
   if aExAt > 0 then
@@ -570,9 +665,9 @@ begin
     if i > 1 then
       raise Exception.Create('Mais de um parâmetro de tempo setado');
     inc(i, 2);
-    setLength(cmd, i);
-    cmd[i - 2] := 'EXAT';
-    cmd[i - 1] := aExAt.ToString;
+    setLength(fCmd, i);
+    fCmd[i - 2] := 'EXAT';
+    fCmd[i - 1] := aExAt.ToString;
   end;
 
   if aPxAt > 0 then
@@ -580,9 +675,9 @@ begin
     if i > 1 then
       raise Exception.Create('Mais de um parâmetro de tempo setado');
     inc(i, 2);
-    setLength(cmd, i);
-    cmd[i - 2] := 'PXAT';
-    cmd[i - 1] := aPxAt.ToString;
+    setLength(fCmd, i);
+    fCmd[i - 2] := 'PXAT';
+    fCmd[i - 1] := aPxAt.ToString;
   end;
 
   if aPersist then
@@ -590,11 +685,11 @@ begin
     if i > 1 then
       raise Exception.Create('Mais de um parâmetro de tempo setado');
     inc(i);
-    setLength(cmd, i);
-    cmd[i - 1] := 'PERSIST';
+    setLength(fCmd, i);
+    fCmd[i - 1] := 'PERSIST';
   end;
 
-  result := AsBool(SendCommand(cmd));
+  result := AsBool(SendCommand(fCmd));
 end;
 
 function TRedisClient.GetRange(const aKey: string; aStart, aEnd: Integer): string;
@@ -620,6 +715,11 @@ end;
 function TRedisClient.IncrByFloat(const aKey: string; aValue: Real): Real;
 begin
   result := AsFloat(SendCommand(['INCRBYFLOAT', aKey, floatToStr(aValue, tFormatSettings.Invariant)]));
+end;
+
+function TRedisClient.Keys(aPattern: string): TArray<string>;
+begin
+  result := AsArray(SendCommand(['KEYS', aPattern]));
 end;
 
 function TRedisClient.LIndex(aKey: string; aIndex: integer): String;
@@ -697,6 +797,11 @@ begin
   result := AsArray(SendCommand(['MGET']+ aKeys));
 end;
 
+function TRedisClient.Move(aKey: string; aDB: integer): boolean;
+begin
+  result := AsBool(SendCommand(['MOVE', akey, aDB.ToString]));
+end;
+
 Procedure TRedisClient.MSet(const aKeyValues: tarray<TPair<string, string>>);
 begin
   SendCommand(['MSET'] + MPairToArray(aKeyValues));
@@ -707,6 +812,21 @@ begin
   SendCommand(['MSETNX'] + MPairToArray(aKeyValues));
 end;
 
+procedure TRedisClient.Persist(aKey: string);
+begin
+  SendCommand(['PERSIST', akey]);
+end;
+
+procedure TRedisClient.PExpire(aKey: string; aMilisseconds: integer; aModifier: string);
+begin
+  SendCommand(_ZExpireCMD('PEXPIRE', aKey, aMilisseconds, aModifier));
+end;
+
+procedure TRedisClient.PExpireAT(akey: string; AUnixTimeMS: int64; aModifier: string);
+begin
+  SendCommand(_ZExpireCMD('PEXPIREAT', aKey, aMilisseconds, aModifier));
+end;
+
 function TRedisClient.Pipeline: TRedisTransaction;
 begin
   result := TRedisTransaction.create(fConn);
@@ -715,6 +835,11 @@ end;
 Procedure TRedisClient.PSetEx(const aKey: string; aMs: uint32; aValue: string);
 begin
   SendCommand(['PSETEX', aMs.ToString, aValue]);
+end;
+
+function TRedisClient.PTTL(aKey: string): integer;
+begin
+  result := AsInteger(SendCommand(['PTTL', aKey]));
 end;
 
 Procedure TRedisClient.SetEx(const aKey: string; aTTL: uint32; aValue: string);
@@ -797,33 +922,46 @@ begin
   SendCommand(['SUNIONSTORE'] + aKeys)
 end;
 
-procedure TRedisClient.ZAdd(aKey: String; aScoreMembers: TArray<TRedisScoreMember>; aNxXx, aGtLt: String; aCh, aIncr: Boolean);
-var
-  cmd: tArray<String>;
+procedure TRedisClient.Touch(aKeys: TArray<string>);
 begin
-  cmd := ['ZADD', aKey] + MPairToArray(aScoreMembers);
+  SendCommand(['TOUCH'] + aKeys);
+end;
+
+function TRedisClient.TTL(aKey: string): integer;
+begin
+  result := AsInteger(SendCommand(['TTL', aKey]));
+end;
+
+procedure TRedisClient.Unlink(aKeys: TArray<String>);
+begin
+  SendCommand(['UNLINK'] + aKeys);
+end;
+
+procedure TRedisClient.ZAdd(aKey: String; aScoreMembers: TArray<TRedisScoreMember>; aNxXx, aGtLt: String; aCh, aIncr: Boolean);
+begin
+  fCmd := ['ZADD', aKey] + MPairToArray(aScoreMembers);
 
   aNxXx := UpperCase(aNxXx);
   if aNxXx <> '' then
     if (aNxXx <> 'NX') and (aNxXx <> 'XX') then
       raise Exception.Create('Error Message')
     else
-      cmd := cmd + [aNxXx];
+      fCmd := fCmd + [aNxXx];
 
   aGtLt := UpperCase(aGtLt);
   if aGtLt <> '' then
     if (aGtLt <> 'GT') and (aGtLt <> 'LT') then
       raise Exception.Create('Error Message')
     else
-      cmd := cmd + [aGtLt];
+      fCmd := fCmd + [aGtLt];
 
   if aCh then
-    cmd := cmd + ['CH'];
+    fCmd := fCmd + ['CH'];
 
   if aIncr then
-    cmd := cmd + ['INCR'];
+    fCmd := fCmd + ['INCR'];
 
-  SendCommand(cmd);
+  SendCommand(fCmd);
 end;
 
 function TRedisClient.ZCard(aKey: String): Integer;
@@ -850,6 +988,13 @@ end;
 function TRedisClient.ZIncrBy(aKey: string; aIncrement: integer; aMember: string): Integer;
 begin
   result := AsInteger(SendCommand(['ZINCRBY', aKey, aIncrement.ToString, aMember]));
+end;
+
+function TRedisClient._ZExpireCMD(aCmd, aKey: String; aInterval: int64; aModifier: string): TArray<String>;
+begin
+  result := [aCmd, akey, aSeconds.ToString];
+  if aModifier in ('NX', 'XX', 'LT', 'GT') then
+    result := result + [aModifier];
 end;
 
 function TRedisClient._ZInterCMD(aCMD, aDestiny: string; aNumKeys: integer; aKeys: TArray<string>; aWeights: TArray<single>; aAggregate: string; aWithScore: Boolean): TArray<string>;
@@ -1048,13 +1193,11 @@ begin
 end;
 
 function TRedisClient.HRandField(const aKey: string; aCount: Integer; aWithValues: Boolean): TArray<String>;
-var
-  cmd: tArray<String>;
 begin
-  cmd := ['HRANDFIELD', aKey, aCount.ToString];
+  fCmd := ['HRANDFIELD', aKey, aCount.ToString];
   if aWithValues then
-    cmd := cmd + ['WITHVALUES'];
-  result := AsArray(SendCommand(cmd));
+    fCmd := fCmd + ['WITHVALUES'];
+  result := AsArray(SendCommand(fCmd));
 end;
 
 procedure TRedisClient.HSet(const aKey: string; aFields: TArray<TRedisKeyValue>);
